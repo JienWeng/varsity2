@@ -2,7 +2,7 @@ import requests
 from typing import Optional, List, Dict
 
 class OllamaConnector:
-    def __init__(self, model: str = "llama3.2:latest", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "gemma3:1b", base_url: str = "http://localhost:11434"):
         self.base_url = base_url.rstrip('/')
         self.available_models = self._get_available_models()
         self.model = self._validate_model(model)

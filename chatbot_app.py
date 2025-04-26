@@ -165,176 +165,154 @@ class ChatbotApp:
             "energy_saved_wh": round(energy_saved, 3),
             "time_saved_seconds": round(time_saved, 2),
             "carbon_saved_g": round(carbon_saved, 2),
-            "trees_equivalent": round(carbon_saved * 0.0085, 4),  # 1 tree absorbs ~117g CO2 per day
             "percentage_saved": round((uncached_stats.get('energy_wh', 0) - cached_stats.get('energy_wh', 0)) / 
                                    uncached_stats.get('energy_wh', 1) * 100, 1)
         }
 
     def _create_comparison_chart(self, cached_stats: Dict, uncached_stats: Dict) -> go.Figure:
-        """Create visualization of total energy usage"""
-        fig = go.Figure()
-        
-        # Calculate total energy usage (only count real LLM queries)
+        """Create a minimalist energy comparison visualization"""
         total_cached = sum(q['energy_wh'] for q in self.query_stats['cached'])
         total_uncached = sum(q['energy_wh'] for q in self.query_stats['uncached'])
         
-        # Create two bars for total energy
-        fig = go.Figure(data=[
-            go.Bar(
-                x=['Total Energy Usage'],
-                y=[total_cached],
-                name='LLM Queries (Cached Side)',
-                marker_color='green',
-                text=[f"{total_cached:.3f} Wh"],
-                textposition='auto',
-                width=0.3
-            ),
-            go.Bar(
-                x=['Total Energy Usage'],
-                y=[total_uncached],
-                name='LLM Queries (Uncached Side)',
-                marker_color='red',
-                text=[f"{total_uncached:.3f} Wh"],
-                textposition='auto',
-                width=0.3
-            )
-        ])
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=['Energy Usage'],
+            y=[total_cached],
+            name='With Cache',
+            marker_color='#34c759',
+            text=[f"{total_cached:.3f} Wh"],
+            textposition='auto',
+            width=0.4
+        ))
         
-        # Calculate savings
-        energy_saved = total_uncached - total_cached
-        carbon_saved = energy_saved * 475 / 1000  # grams CO2
+        fig.add_trace(go.Bar(
+            x=['Energy Usage'],
+            y=[total_uncached],
+            name='Without Cache',
+            marker_color='#ff3b30',
+            text=[f"{total_uncached:.3f} Wh"],
+            textposition='auto',
+            width=0.4
+        ))
         
-        # Add savings annotation
-        fig.add_annotation(
-            x=1.3,  # Position to the right of bars
-            y=max(total_cached, total_uncached)/2,
-            text=f"Carbon Saved:<br>{carbon_saved:.2f}g CO2<br>≈ {(carbon_saved * 0.0085):.3f} tree days",
-            showarrow=False,
-            font=dict(size=14),
-            bgcolor='lightgreen',
-            bordercolor='green',
-            borderwidth=2,
-            borderpad=4,
-            align='center'
-        )
-        
-        # Update layout
         fig.update_layout(
-            title="Total Energy Consumption Comparison",
+            template='plotly_white',
             showlegend=True,
-            height=400,
-            bargap=0.15,
-            margin=dict(r=200),  # Make room for savings card
+            legend=dict(orientation="h", y=1.1),
+            margin=dict(l=40, r=40, t=60, b=40),
             yaxis_title="Energy (Wh)",
-            template="plotly_white"
+            plot_bgcolor='rgba(0,0,0,0)'
         )
         
         return fig
 
+    def _create_savings_info(self) -> Tuple[str, str, str]:
+        """Create formatted savings info for cards"""
+        total_cached = sum(q['energy_wh'] for q in self.query_stats['cached'])
+        total_uncached = sum(q['energy_wh'] for q in self.query_stats['uncached'])
+        energy_saved = total_uncached - total_cached
+        carbon_saved = energy_saved * 475 / 1000  # grams CO2
+        
+        # Calculate money saved (using average US electricity rate of $0.14/kWh)
+        money_saved = (energy_saved / 1000) * 0.14  # Convert Wh to kWh then multiply by rate
+        
+        energy_text = f"### 💡 Energy Saved\n{energy_saved:.3f} Wh"
+        carbon_text = f"### 🌍 Carbon Reduced\n{carbon_saved:.2f}g CO2"
+        money_text = f"### 💰 Cost Saved\n${money_saved:.4f}"
+        
+        return energy_text, carbon_text, money_text
+
     def launch_comparison_interface(self):
-        """Launch side-by-side comparison interface"""
-        with gr.Blocks(title="Cache vs No-Cache Comparison") as interface:
-            gr.Markdown("# 🔄 Cache vs No-Cache Comparison")
+        with gr.Blocks(title="Energy Usage Comparison", theme="soft") as interface:
+            gr.Markdown("# Energy Usage Comparison")
             
+            # Chat interfaces
             with gr.Row():
                 with gr.Column():
-                    gr.Markdown("## With Cache")
+                    gr.Markdown("### With Cache")
                     cached_chat = gr.Chatbot(
-                        label="Cached Responses",
+                        label="Cached Chat",
                         type="messages",
                         show_copy_button=True
                     )
                     cached_msg = gr.Textbox(
-                        placeholder="Type message here...",
-                        label="Message (Cached Side)"
+                        placeholder="Enter message...",
+                        show_label=False
                     )
-                    cached_send = gr.Button("Send (Cached)")
+                    cached_send = gr.Button("Send", variant="primary")
                 
                 with gr.Column():
-                    gr.Markdown("## Without Cache")
+                    gr.Markdown("### Without Cache")
                     uncached_chat = gr.Chatbot(
-                        label="Uncached Responses",
+                        label="Uncached Chat",
                         type="messages",
                         show_copy_button=True
                     )
                     uncached_msg = gr.Textbox(
-                        placeholder="Type message here...",
-                        label="Message (Uncached Side)"
+                        placeholder="Enter message...",
+                        show_label=False
                     )
-                    uncached_send = gr.Button("Send (Uncached)")
+                    uncached_send = gr.Button("Send", variant="primary")
             
-            with gr.Row():
-                clear_btn = gr.Button("Clear Both")
+            # Control buttons - moved up before usage
+            clear_btn = gr.Button("Clear All", variant="secondary")
             
-            # Add comparison visualization
+            # Visualization and cards
             comparison_chart = gr.Plot(label="Energy Impact")
-
-            def update_visualization() -> go.Figure:
-                return self._create_comparison_chart(
-                    self._latest_cached_stats,
-                    self._latest_uncached_stats
-                )
             
-            def process_cached_and_update(message: str, history: List[Dict]) -> Tuple[str, List[Dict], go.Figure]:
-                msg, new_history = self.process_cached_only(message, history)
-                return msg, new_history, self._create_comparison_chart(
-                    self._latest_cached_stats,
-                    self._latest_uncached_stats
-                )
-            
-            def process_uncached_and_update(message: str, history: List[Dict]) -> Tuple[str, List[Dict], go.Figure]:
-                msg, new_history = self.process_uncached_only(message, history)
-                return msg, new_history, self._create_comparison_chart(
-                    self._latest_cached_stats,
-                    self._latest_uncached_stats
-                )
-            
-            # Handle cached side
-            cached_send.click(
-                process_cached_and_update,
-                [cached_msg, cached_chat],
-                [cached_msg, cached_chat, comparison_chart]
-            )
-            
-            # Handle uncached side
-            uncached_send.click(
-                process_uncached_and_update,
-                [uncached_msg, uncached_chat],
-                [uncached_msg, uncached_chat, comparison_chart]
-            )
-            
-            # Simplify to just a refresh button
             with gr.Row():
-                gr.Markdown("## Power Usage")
-                refresh_btn = gr.Button("🔄 Update Stats", variant="secondary")
+                with gr.Column(scale=1):
+                    energy_card = gr.Markdown()
+                with gr.Column(scale=1):
+                    carbon_card = gr.Markdown()
+                with gr.Column(scale=1):
+                    trees_card = gr.Markdown()
 
-            def update_power_stats():
-                """Update power stats"""
-                if self.energy_monitor:
-                    current_stats = self.energy_monitor._get_power_usage()
-                    if current_stats:
-                        self._latest_cached_stats.update({
-                            'power_watts': current_stats.get('power_watts', 0)
-                        })
-                return self._create_comparison_chart(
+            def update_interface(message, history, is_cached=True):
+                if is_cached:
+                    msg, new_history = self.process_cached_only(message, history)
+                else:
+                    msg, new_history = self.process_uncached_only(message, history)
+                
+                chart = self._create_comparison_chart(
                     self._latest_cached_stats,
                     self._latest_uncached_stats
                 )
-
-            # Manual refresh only
-            refresh_btn.click(
-                fn=update_power_stats,
-                outputs=comparison_chart
+                
+                energy_text, carbon_text, money_text = self._create_savings_info()
+                return msg, new_history, chart, energy_text, carbon_text, money_text
+            
+            # Update event handlers
+            cached_send.click(
+                fn=lambda m, h: update_interface(m, h, True),
+                inputs=[cached_msg, cached_chat],
+                outputs=[cached_msg, cached_chat, comparison_chart, 
+                        energy_card, carbon_card, trees_card]
             )
-
-            # Clear everything
+            
+            uncached_send.click(
+                fn=lambda m, h: update_interface(m, h, False),
+                inputs=[uncached_msg, uncached_chat],
+                outputs=[uncached_msg, uncached_chat, comparison_chart,
+                        energy_card, carbon_card, trees_card]
+            )
+            
+            # Initialize cards
+            energy_text, carbon_text, money_text = self._create_savings_info()
+            energy_card.value = energy_text
+            carbon_card.value = carbon_text
+            trees_card.value = money_text
+            
+            # Update clear handler to show money instead of trees
             clear_btn.click(
-                lambda: ("", [], "", [], None),
-                None,
-                [cached_msg, cached_chat, uncached_msg, uncached_chat, comparison_chart]
+                fn=lambda: ("", [], "", [], None, "### 💡 Energy Saved\n0.000 Wh",
+                           "### 🌍 Carbon Reduced\n0.00g CO2",
+                           "### 💰 Cost Saved\n$0.0000"),
+                outputs=[cached_msg, cached_chat, uncached_msg, uncached_chat,
+                        comparison_chart, energy_card, carbon_card, trees_card]
             )
 
-        interface.launch(share=True)  # Enable public sharing
+        interface.launch(share=True)
 
 if __name__ == "__main__":
     app = ChatbotApp()
