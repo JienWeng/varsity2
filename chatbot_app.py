@@ -76,48 +76,40 @@ class ChatbotApp:
             })
 
     def process_cached_only(self, message: str, history: List[Dict]) -> Tuple[str, List[Dict]]:
-        """Process message with cache only"""
+        """Process message from cached side"""
         if not message.strip():
             return "", history
 
         try:
+            # Always monitor energy for cached side
             if self.energy_monitor:
                 self.energy_monitor.start_monitoring()
             
+            # Try to get from cache first
             cached_response = self.semantic_cache.get_response(message)
+            
+            if not cached_response:
+                # If not in cache, get new response
+                cached_response = self.ollama.generate_response(message)
+                if cached_response:
+                    self.semantic_cache.add_to_cache(message, cached_response)
+            
+            # Always record energy under cached stats
             energy_data = self.energy_monitor.end_monitoring() if self.energy_monitor else {}
             
             if cached_response:
-                print("Cache hit! Skipping uncached side.")
                 new_history = history + [
                     {"role": "user", "content": message},
                     {"role": "assistant", "content": cached_response}
                 ]
-                # Update chart with energy data
+                # Always update cached stats regardless of cache hit/miss
                 self._latest_cached_stats = {
-                    "status": "hit",
+                    "status": "cached_side",
                     "energy_wh": energy_data.get('energy_wh', 0),
                     "duration_seconds": energy_data.get('duration_seconds', 0),
                     "power_watts": energy_data.get('avg_power_watts', 0)
                 }
-                self._update_cumulative_stats(energy_data, 'cached')  # Update with raw energy data
-                return "", new_history
-            
-            # Cache miss - need to generate new response
-            response = self.ollama.generate_response(message)
-            if response:
-                self.semantic_cache.add_to_cache(message, response)
-                new_history = history + [
-                    {"role": "user", "content": message},
-                    {"role": "assistant", "content": response}
-                ]
-                self._latest_cached_stats = {
-                    "status": "miss",
-                    "energy_wh": energy_data.get('energy_wh', 0),
-                    "duration_seconds": energy_data.get('duration_seconds', 0),
-                    "power_watts": energy_data.get('avg_power_watts', 0)
-                }
-                self._update_cumulative_stats(energy_data, 'cached')  # Update with raw energy data
+                self._update_cumulative_stats(energy_data, 'cached')
                 return "", new_history
             
             return "", history
@@ -127,14 +119,16 @@ class ChatbotApp:
             return "", history
 
     def process_uncached_only(self, message: str, history: List[Dict]) -> Tuple[str, List[Dict]]:
-        """Process message without cache"""
+        """Process message from uncached side"""
         if not message.strip():
             return "", history
 
         try:
+            # Always monitor energy for uncached side
             if self.energy_monitor:
                 self.energy_monitor.start_monitoring()
             
+            # Always get fresh response without using cache
             response = self.ollama.generate_response(message)
             energy_data = self.energy_monitor.end_monitoring() if self.energy_monitor else {}
             
@@ -143,13 +137,14 @@ class ChatbotApp:
                     {"role": "user", "content": message},
                     {"role": "assistant", "content": response}
                 ]
+                # Always update uncached stats
                 self._latest_uncached_stats = {
-                    "status": "generated",
+                    "status": "uncached_side",
                     "energy_wh": energy_data.get('energy_wh', 0),
                     "duration_seconds": energy_data.get('duration_seconds', 0),
                     "power_watts": energy_data.get('avg_power_watts', 0)
                 }
-                self._update_cumulative_stats(energy_data, 'uncached')  # Update with raw energy data
+                self._update_cumulative_stats(energy_data, 'uncached')
                 return "", new_history
             
             return "", history
@@ -179,7 +174,7 @@ class ChatbotApp:
         """Create visualization of total energy usage"""
         fig = go.Figure()
         
-        # Calculate total energy usage
+        # Calculate total energy usage (only count real LLM queries)
         total_cached = sum(q['energy_wh'] for q in self.query_stats['cached'])
         total_uncached = sum(q['energy_wh'] for q in self.query_stats['uncached'])
         
@@ -188,7 +183,7 @@ class ChatbotApp:
             go.Bar(
                 x=['Total Energy Usage'],
                 y=[total_cached],
-                name='With Cache',
+                name='LLM Queries (Cached Side)',
                 marker_color='green',
                 text=[f"{total_cached:.3f} Wh"],
                 textposition='auto',
@@ -197,7 +192,7 @@ class ChatbotApp:
             go.Bar(
                 x=['Total Energy Usage'],
                 y=[total_uncached],
-                name='Without Cache',
+                name='LLM Queries (Uncached Side)',
                 marker_color='red',
                 text=[f"{total_uncached:.3f} Wh"],
                 textposition='auto',
